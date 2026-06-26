@@ -35,12 +35,7 @@ import { useHistory } from "@/context/HistoryContext";
 
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 
-const PLATFORMS: {
-  id: string;
-  label: string;
-  icon: IoniconName;
-  color: string;
-}[] = [
+const PLATFORMS: { id: string; label: string; icon: IoniconName; color: string }[] = [
   { id: "youtube", label: "YouTube", icon: "logo-youtube", color: "#FF0000" },
   { id: "tiktok", label: "TikTok", icon: "musical-notes", color: "#00f2ea" },
   { id: "instagram", label: "Instagram", icon: "logo-instagram", color: "#E1306C" },
@@ -89,6 +84,7 @@ export default function DownloadScreen() {
   const [localError, setLocalError] = useState("");
 
   const infoFadeAnim = useRef(new Animated.Value(0)).current;
+  const btnSlideAnim = useRef(new Animated.Value(100)).current;
   const orb1Scale = useRef(new Animated.Value(1)).current;
   const orb2Scale = useRef(new Animated.Value(1)).current;
 
@@ -106,6 +102,24 @@ export default function DownloadScreen() {
       ])
     ).start();
   }, []);
+
+  // Animate download button in when video is ready
+  useEffect(() => {
+    if (videoInfo && downloadState === "idle") {
+      Animated.spring(btnSlideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 60,
+        friction: 10,
+      }).start();
+    } else {
+      Animated.timing(btnSlideAnim, {
+        toValue: 120,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [videoInfo, downloadState]);
 
   const infoMutation = useGetVideoInfo();
   const downloadMutation = useStartDownload();
@@ -159,6 +173,7 @@ export default function DownloadScreen() {
         setVideoInfo(null);
         setDownloadState("idle");
         setJobId(null);
+        infoFadeAnim.setValue(0);
       }
     } catch {
       setLocalError("Clipboard access failed. Paste manually.");
@@ -241,26 +256,23 @@ export default function DownloadScreen() {
   const strokeDashoffset = circumference * (1 - Math.min(progress, 100) / 100);
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 0);
-  const botPad = insets.bottom + (Platform.OS === "web" ? 34 : 84);
+  // Leave room for sticky download button (72) + tab bar
+  const isWeb = Platform.OS === "web";
+  const tabBarHeight = isWeb ? 34 + 52 : insets.bottom + 49;
+  const botPad = (videoInfo && downloadState === "idle") ? tabBarHeight + 80 : tabBarHeight + 16;
 
-  const muted = "#13172A";
-  const border = colors.border;
+  const fmt = FORMATS[selectedFormat];
+  const isAudio = fmt?.isAudio ?? false;
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Background orbs */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Animated.View
-          style={[
-            styles.orb,
-            { top: -60, left: -60, width: 240, height: 240, transform: [{ scale: orb1Scale }] },
-          ]}
+          style={[styles.orb, { top: -60, left: -60, width: 240, height: 240, transform: [{ scale: orb1Scale }] }]}
         />
         <Animated.View
-          style={[
-            styles.orb2,
-            { top: 120, right: -60, width: 200, height: 200, transform: [{ scale: orb2Scale }] },
-          ]}
+          style={[styles.orb2, { top: 120, right: -60, width: 200, height: 200, transform: [{ scale: orb2Scale }] }]}
         />
       </View>
 
@@ -300,7 +312,7 @@ export default function DownloadScreen() {
                 style={[
                   styles.pill,
                   {
-                    borderColor: active ? p.color : border,
+                    borderColor: active ? p.color : colors.border,
                     backgroundColor: active ? p.color + "18" : colors.card,
                   },
                 ]}
@@ -315,9 +327,9 @@ export default function DownloadScreen() {
         </ScrollView>
 
         {/* URL Input */}
-        <View style={[styles.inputCard, { backgroundColor: colors.card, borderColor: border }]}>
+        <View style={[styles.inputCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.inputLabel, { color: colors.mutedForeground }]}>PASTE VIDEO URL</Text>
-          <View style={[styles.inputRow, { backgroundColor: muted }]}>
+          <View style={[styles.inputRow, { backgroundColor: "#13172A" }]}>
             <Ionicons name="link-outline" size={16} color={colors.mutedForeground} />
             <TextInput
               value={url}
@@ -374,7 +386,10 @@ export default function DownloadScreen() {
         {/* Video Info Card */}
         {videoInfo && (
           <Animated.View
-            style={[styles.infoCard, { backgroundColor: colors.card, borderColor: border, opacity: infoFadeAnim }]}
+            style={[
+              styles.infoCard,
+              { backgroundColor: colors.card, borderColor: colors.border, opacity: infoFadeAnim },
+            ]}
           >
             <View style={styles.infoRow}>
               {videoInfo.thumbnail ? (
@@ -414,9 +429,9 @@ export default function DownloadScreen() {
             <View style={styles.formatSection}>
               <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>CHOOSE FORMAT</Text>
               <View style={styles.formatGrid}>
-                {FORMATS.map((fmt, i) => {
+                {FORMATS.map((f, i) => {
                   const active = selectedFormat === i;
-                  const accent = fmt.isAudio ? colors.accent : colors.primary;
+                  const accent = f.isAudio ? colors.accent : colors.primary;
                   return (
                     <Pressable
                       key={i}
@@ -428,7 +443,7 @@ export default function DownloadScreen() {
                         styles.formatCard,
                         {
                           backgroundColor: active ? accent + "18" : colors.card,
-                          borderColor: active ? accent : border,
+                          borderColor: active ? accent : colors.border,
                         },
                       ]}
                     >
@@ -438,15 +453,15 @@ export default function DownloadScreen() {
                         </View>
                       )}
                       <Ionicons
-                        name={fmt.isAudio ? "musical-notes" : "videocam"}
+                        name={f.isAudio ? "musical-notes" : "videocam"}
                         size={20}
                         color={active ? accent : colors.mutedForeground}
                       />
                       <Text style={[styles.formatLabel, { color: active ? colors.foreground : colors.mutedForeground }]}>
-                        {fmt.label}
+                        {f.label}
                       </Text>
                       <Text style={[styles.formatSub, { color: active ? accent : colors.mutedForeground }]}>
-                        {fmt.sub}
+                        {f.sub}
                       </Text>
                     </Pressable>
                   );
@@ -457,7 +472,7 @@ export default function DownloadScreen() {
 
         {/* Progress */}
         {(downloadState === "downloading" || downloadState === "saving") && (
-          <View style={[styles.progressCard, { backgroundColor: colors.card, borderColor: border }]}>
+          <View style={[styles.progressCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.progressHeader}>
               <Text style={[styles.progressTitle, { color: colors.foreground }]} numberOfLines={1}>
                 {videoInfo?.title}
@@ -468,11 +483,9 @@ export default function DownloadScreen() {
             </View>
             <View style={styles.progressCircleRow}>
               <Svg width={80} height={80} viewBox="0 0 80 80">
-                <Circle cx="40" cy="40" r="34" fill="none" stroke={border} strokeWidth="4" />
+                <Circle cx="40" cy="40" r="34" fill="none" stroke={colors.border} strokeWidth="4" />
                 <Circle
-                  cx="40"
-                  cy="40"
-                  r="34"
+                  cx="40" cy="40" r="34"
                   fill="none"
                   stroke={downloadState === "saving" ? colors.accent : colors.primary}
                   strokeWidth="4"
@@ -513,7 +526,7 @@ export default function DownloadScreen() {
             <Ionicons name="checkmark-circle" size={44} color="#34d399" />
             <Text style={[styles.successTitle, { color: "#34d399" }]}>Download Complete</Text>
             <Text style={[styles.successSub, { color: colors.mutedForeground }]}>
-              The file was opened for download. Check your browser or Files app.
+              The file was sent to your browser for saving.
             </Text>
             <Pressable
               onPress={handleReset}
@@ -528,26 +541,7 @@ export default function DownloadScreen() {
           </View>
         )}
 
-        {/* Download Button */}
-        {videoInfo && downloadState === "idle" && (
-          <Pressable
-            onPress={handleDownload}
-            disabled={downloadMutation.isPending}
-            style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1, marginTop: 12 })}
-          >
-            <LinearGradient
-              colors={["#0891B2", "#00D4FF"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.primaryBtn}
-            >
-              <Ionicons name="download" size={18} color="#000" />
-              <Text style={[styles.primaryBtnText, { color: "#000" }]}>Download Now</Text>
-            </LinearGradient>
-          </Pressable>
-        )}
-
-        {/* Error state button */}
+        {/* Error retry */}
         {downloadState === "error" && (
           <Pressable
             onPress={() => setDownloadState("idle")}
@@ -560,7 +554,7 @@ export default function DownloadScreen() {
           </Pressable>
         )}
 
-        {/* Hint */}
+        {/* Hint when empty */}
         {!videoInfo && downloadState === "idle" && (
           <View style={styles.hintBox}>
             <Ionicons name="information-circle-outline" size={18} color={colors.mutedForeground} />
@@ -570,6 +564,41 @@ export default function DownloadScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* Sticky Download Button — slides up when video is ready */}
+      {videoInfo && downloadState === "idle" && (
+        <Animated.View
+          style={[
+            styles.stickyBtnWrap,
+            {
+              bottom: tabBarHeight + 8,
+              transform: [{ translateY: btnSlideAnim }],
+            },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Pressable
+            onPress={handleDownload}
+            disabled={downloadMutation.isPending}
+            style={({ pressed }) => ({ opacity: pressed ? 0.88 : 1 })}
+          >
+            <LinearGradient
+              colors={isAudio ? ["#0891B2", "#00D4FF"] : ["#6D28D9", "#00D4FF"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.stickyBtn}
+            >
+              <Ionicons name="download" size={20} color="#fff" />
+              <Text style={styles.stickyBtnText}>
+                Download {fmt?.label} {fmt?.sub}
+              </Text>
+              <View style={[styles.stickyBtnBadge, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
+                <Text style={styles.stickyBtnBadgeText}>{isAudio ? "AUDIO" : "VIDEO"}</Text>
+              </View>
+            </LinearGradient>
+          </Pressable>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -577,16 +606,8 @@ export default function DownloadScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scroll: { paddingHorizontal: 16 },
-  orb: {
-    position: "absolute",
-    borderRadius: 999,
-    backgroundColor: "#7C3AED33",
-  },
-  orb2: {
-    position: "absolute",
-    borderRadius: 999,
-    backgroundColor: "#00D4FF22",
-  },
+  orb: { position: "absolute", borderRadius: 999, backgroundColor: "#7C3AED33" },
+  orb2: { position: "absolute", borderRadius: 999, backgroundColor: "#00D4FF22" },
   header: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 12, paddingBottom: 8 },
   logoBox: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   logoTitle: { fontSize: 20, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
@@ -640,8 +661,7 @@ const styles = StyleSheet.create({
   formatGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   formatCard: {
     flex: 1, minWidth: "45%",
-    borderRadius: 14, borderWidth: 1, padding: 12, gap: 4,
-    position: "relative",
+    borderRadius: 14, borderWidth: 1, padding: 12, gap: 4, position: "relative",
   },
   formatCheck: {
     position: "absolute", top: 8, right: 8,
@@ -651,9 +671,7 @@ const styles = StyleSheet.create({
   formatLabel: { fontSize: 14, fontFamily: "Inter_700Bold" },
   formatSub: { fontSize: 11, fontFamily: "Inter_500Medium" },
   progressCard: { borderRadius: 16, borderWidth: 1, padding: 16, marginTop: 16, gap: 12 },
-  progressHeader: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-  },
+  progressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   progressTitle: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, marginRight: 8 },
   progressPct: { fontSize: 15, fontFamily: "Inter_700Bold" },
   progressCircleRow: { flexDirection: "row", alignItems: "center", gap: 16 },
@@ -674,4 +692,30 @@ const styles = StyleSheet.create({
   resetBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   hintBox: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 16, marginTop: 8 },
   hintText: { fontSize: 13, fontFamily: "Inter_400Regular", flex: 1, lineHeight: 20 },
+
+  // Sticky download button
+  stickyBtnWrap: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+  },
+  stickyBtn: {
+    borderRadius: 18,
+    paddingVertical: 17,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    shadowColor: "#7C3AED",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  stickyBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_700Bold", flex: 1 },
+  stickyBtnBadge: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+  },
+  stickyBtnBadgeText: { color: "rgba(255,255,255,0.9)", fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 1 },
 });
