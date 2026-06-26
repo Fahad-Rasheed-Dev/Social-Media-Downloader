@@ -13,6 +13,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
+import Head from "expo-router/head";
 import { useColors } from "@/hooks/useColors";
 import { useHistory, type DownloadRecord } from "@/context/HistoryContext";
 
@@ -137,6 +138,11 @@ export default function HistoryScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <Head>
+        <title>Download History — SaveFlow</title>
+        <meta name="description" content="View your SaveFlow download history. Revisit every video and audio file you've downloaded." />
+        <meta name="robots" content="noindex" />
+      </Head>
       {/* Header */}
       <View style={[styles.header, { paddingTop: topPad + 12 }]}>
         <View style={styles.headerLeft}>

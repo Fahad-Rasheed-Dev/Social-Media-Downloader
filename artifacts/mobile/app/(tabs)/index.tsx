@@ -24,6 +24,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import Svg, { Circle } from "react-native-svg";
 
+import Head from "expo-router/head";
 import { useColors } from "@/hooks/useColors";
 import {
   useGetVideoInfo,
@@ -264,8 +265,19 @@ export default function DownloadScreen() {
   const fmt = FORMATS[selectedFormat];
   const isAudio = fmt?.isAudio ?? false;
 
+  const pageTitle = videoInfo
+    ? `${videoInfo.title} — SaveFlow`
+    : "SaveFlow — Download Videos & Audio";
+
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <Head>
+        <title>{pageTitle}</title>
+        <meta name="description" content={videoInfo ? `Download "${videoInfo.title}" from ${videoInfo.platform} as MP4 or MP3 with SaveFlow.` : "Paste any video URL from YouTube, TikTok, Instagram, Facebook, Twitter/X, or Reddit and download as MP4 or MP3."} />
+        {videoInfo?.thumbnail && <meta property="og:image" content={videoInfo.thumbnail} />}
+        {videoInfo?.thumbnail && <meta name="twitter:image" content={videoInfo.thumbnail} />}
+        {videoInfo && <meta property="og:title" content={pageTitle} />}
+      </Head>
       {/* Background orbs */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <Animated.View
