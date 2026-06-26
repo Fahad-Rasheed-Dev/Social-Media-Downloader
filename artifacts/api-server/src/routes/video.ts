@@ -31,10 +31,11 @@ function formatDuration(seconds: number): string {
 
 function findYtDlp(): string {
   const candidates = [
+    "/home/runner/workspace/.pythonlibs/bin/yt-dlp",
+    "/home/runner/.local/bin/yt-dlp",
     "yt-dlp",
     "/home/runner/.nix-profile/bin/yt-dlp",
     "/nix/var/nix/profiles/default/bin/yt-dlp",
-    "/home/runner/workspace/.local/bin/yt-dlp",
   ];
   for (const c of candidates) {
     try {
