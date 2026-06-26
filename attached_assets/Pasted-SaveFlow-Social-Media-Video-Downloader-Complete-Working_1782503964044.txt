@@ -1,0 +1,882 @@
+SaveFlow - Social Media Video Downloader
+
+Complete Working App Prompt for Bolt.new
+
+
+Build a complete full-stack video downloader web app called SaveFlow that actually downloads videos and audio from YouTube, TikTok, Instagram, Facebook, Twitter/X, and other social media platforms.
+
+
+TECH STACK
+
+Frontend:
+
+
+React 18 + TypeScript
+Vite
+Tailwind CSS
+Framer Motion (animations)
+Axios
+
+
+Backend:
+
+
+Node.js + Express + TypeScript
+yt-dlp (actual download engine)
+fluent-ffmpeg (audio conversion)
+cors, helmet, express-rate-limit
+uuid (job IDs)
+fs-extra
+
+
+
+COMPLETE BACKEND CODE
+
+server/package.json
+
+json{
+  "name": "saveflow-server",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "nodemon src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5",
+    "uuid": "^9.0.0",
+    "fs-extra": "^11.2.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/uuid": "^9.0.7",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "nodemon": "^3.0.2",
+    "ts-node": "^10.9.2"
+  }
+}
+
+server/src/index.ts
+
+typescriptimport express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import path from 'path';
+import fs from 'fs-extra';
+import { spawn } from 'child_process';
+import { v4 as uuidv4 } from 'uuid';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+const DOWNLOAD_DIR = path.join(__dirname, '../downloads');
+
+fs.ensureDirSync(DOWNLOAD_DIR);
+
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+app.use(express.json());
+
+const limiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many requests, try again later.' }
+});
+app.use('/api/', limiter);
+
+// Serve downloaded files
+app.use('/files', express.static(DOWNLOAD_DIR));
+
+// ─── GET VIDEO INFO ───────────────────────────────────────────────
+app.post('/api/info', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  const args = [
+    '--dump-json',
+    '--no-playlist',
+    '--no-warnings',
+    url
+  ];
+
+  const proc = spawn('yt-dlp', args);
+  let output = '';
+  let errorOutput = '';
+
+  proc.stdout.on('data', (data) => { output += data.toString(); });
+  proc.stderr.on('data', (data) => { errorOutput += data.toString(); });
+
+  proc.on('close', (code) => {
+    if (code !== 0) {
+      return res.status(400).json({ error: 'Could not fetch video info. Check the URL.' });
+    }
+    try {
+      const info = JSON.parse(output);
+      res.json({
+        title: info.title,
+        duration: info.duration_string || formatDuration(info.duration),
+        thumbnail: info.thumbnail,
+        platform: info.extractor_key?.toLowerCase() || 'unknown',
+        uploader: info.uploader || info.channel || 'Unknown',
+        view_count: info.view_count,
+        formats: [
+          { id: 'mp4-1080', label: 'MP4 1080p HD', ext: 'mp4', quality: '1080' },
+          { id: 'mp4-720', label: 'MP4 720p', ext: 'mp4', quality: '720' },
+          { id: 'mp4-480', label: 'MP4 480p Mobile', ext: 'mp4', quality: '480' },
+          { id: 'mp4-360', label: 'MP4 360p', ext: 'mp4', quality: '360' },
+          { id: 'mp3-320', label: 'MP3 320kbps', ext: 'mp3', quality: '320' },
+          { id: 'mp3-128', label: 'MP3 128kbps', ext: 'mp3', quality: '128' },
+        ]
+      });
+    } catch {
+      res.status(500).json({ error: 'Failed to parse video info' });
+    }
+  });
+});
+
+// ─── DOWNLOAD VIDEO ───────────────────────────────────────────────
+app.post('/api/download', async (req, res) => {
+  const { url, format, quality } = req.body;
+  if (!url || !format) return res.status(400).json({ error: 'URL and format are required' });
+
+  const jobId = uuidv4();
+  const isAudio = format === 'mp3';
+  const ext = isAudio ? 'mp3' : 'mp4';
+  const outputFile = path.join(DOWNLOAD_DIR, `${jobId}.${ext}`);
+  const outputTemplate = path.join(DOWNLOAD_DIR, `${jobId}.%(ext)s`);
+
+  let args: string[];
+
+  if (isAudio) {
+    args = [
+      '-f', 'bestaudio/best',
+      '--extract-audio',
+      '--audio-format', 'mp3',
+      '--audio-quality', quality === '128' ? '5' : '0',
+      '--no-playlist',
+      '--no-warnings',
+      '-o', outputTemplate,
+      url
+    ];
+  } else {
+    const height = quality || '1080';
+    args = [
+      '-f', `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]/best`,
+      '--merge-output-format', 'mp4',
+      '--no-playlist',
+      '--no-warnings',
+      '-o', outputTemplate,
+      url
+    ];
+  }
+
+  const proc = spawn('yt-dlp', args);
+  let errorOutput = '';
+  proc.stderr.on('data', (data) => { errorOutput += data.toString(); });
+
+  proc.on('close', async (code) => {
+    if (code !== 0) {
+      console.error('yt-dlp error:', errorOutput);
+      return res.status(500).json({ error: 'Download failed. Video might be private or geo-restricted.' });
+    }
+
+    // Find the actual output file (yt-dlp may change extension)
+    const files = await fs.readdir(DOWNLOAD_DIR);
+    const downloadedFile = files.find(f => f.startsWith(jobId));
+
+    if (!downloadedFile) {
+      return res.status(500).json({ error: 'Downloaded file not found' });
+    }
+
+    const filePath = path.join(DOWNLOAD_DIR, downloadedFile);
+    const stats = await fs.stat(filePath);
+    const fileName = `saveflow_${Date.now()}.${downloadedFile.split('.').pop()}`;
+
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : 'video/mp4');
+    res.setHeader('Content-Length', stats.size);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+
+    fileStream.on('end', async () => {
+      // Cleanup file after sending
+      await fs.remove(filePath).catch(() => {});
+    });
+
+    res.on('error', async () => {
+      await fs.remove(filePath).catch(() => {});
+    });
+  });
+});
+
+// ─── SSE PROGRESS ENDPOINT ───────────────────────────────────────
+app.get('/api/progress', (req, res) => {
+  const { url, format, quality } = req.query as Record<string, string>;
+  if (!url) return res.status(400).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const isAudio = format === 'mp3';
+  const jobId = uuidv4();
+  const outputTemplate = path.join(DOWNLOAD_DIR, `${jobId}.%(ext)s`);
+
+  let args: string[];
+  if (isAudio) {
+    args = [
+      '-f', 'bestaudio/best',
+      '--extract-audio', '--audio-format', 'mp3',
+      '--audio-quality', quality === '128' ? '5' : '0',
+      '--no-playlist', '--no-warnings',
+      '--newline',
+      '--progress-template', '%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
+      '-o', outputTemplate, url
+    ];
+  } else {
+    args = [
+      '-f', `bestvideo[height<=${quality || '1080'}]+bestaudio/best`,
+      '--merge-output-format', 'mp4',
+      '--no-playlist', '--no-warnings',
+      '--newline',
+      '--progress-template', '%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
+      '-o', outputTemplate, url
+    ];
+  }
+
+  const proc = spawn('yt-dlp', args);
+
+  proc.stdout.on('data', (data) => {
+    const lines = data.toString().split('\n').filter(Boolean);
+    for (const line of lines) {
+      if (line.includes('|')) {
+        const [pct, speed, eta] = line.split('|');
+        res.write(`data: ${JSON.stringify({ percent: pct?.trim(), speed: speed?.trim(), eta: eta?.trim(), jobId })}\n\n`);
+      }
+    }
+  });
+
+  proc.on('close', async (code) => {
+    if (code === 0) {
+      res.write(`data: ${JSON.stringify({ done: true, jobId })}\n\n`);
+    } else {
+      res.write(`data: ${JSON.stringify({ error: true })}\n\n`);
+    }
+    res.end();
+  });
+
+  req.on('close', () => { proc.kill(); });
+});
+
+// ─── HEALTH CHECK ─────────────────────────────────────────────────
+app.get('/api/health', (_, res) => res.json({ status: 'ok', ytdlp: true }));
+
+// ─── CLEANUP OLD FILES ─────────────────────────────────────────────
+setInterval(async () => {
+  const files = await fs.readdir(DOWNLOAD_DIR);
+  const now = Date.now();
+  for (const file of files) {
+    const filePath = path.join(DOWNLOAD_DIR, file);
+    const stat = await fs.stat(filePath);
+    if (now - stat.mtimeMs > 30 * 60 * 1000) {
+      await fs.remove(filePath).catch(() => {});
+    }
+  }
+}, 10 * 60 * 1000);
+
+function formatDuration(seconds: number): string {
+  if (!seconds) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+app.listen(PORT, () => {
+  console.log(`✅ SaveFlow Server running on port ${PORT}`);
+});
+
+
+COMPLETE FRONTEND CODE
+
+client/src/App.tsx
+
+tsximport { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import DownloadPage from './pages/DownloadPage';
+import HistoryPage from './pages/HistoryPage';
+
+type Tab = 'download' | 'history';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('download');
+
+  return (
+    <div className="min-h-screen bg-[#080B14] text-white font-inter overflow-hidden max-w-md mx-auto relative">
+      {/* Animated Background Orbs */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <motion.div
+          animate={{ scale: [1, 1.15, 1], opacity: [0.15, 0.25, 0.15] }}
+          transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
+          className="absolute -top-16 -left-16 w-64 h-64 rounded-full bg-violet-600 blur-[80px]"
+        />
+        <motion.div
+          animate={{ scale: [1, 1.12, 1], opacity: [0.12, 0.22, 0.12] }}
+          transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
+          className="absolute top-32 -right-16 w-56 h-56 rounded-full bg-cyan-400 blur-[80px]"
+        />
+        <motion.div
+          animate={{ scale: [1, 1.1, 1], opacity: [0.1, 0.18, 0.1] }}
+          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut', delay: 4 }}
+          className="absolute bottom-32 -left-8 w-48 h-48 rounded-full bg-violet-700 blur-[60px]"
+        />
+      </div>
+
+      <AnimatePresence mode="wait">
+        {activeTab === 'download' && (
+          <motion.div key="download"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}>
+            <DownloadPage />
+          </motion.div>
+        )}
+        {activeTab === 'history' && (
+          <motion.div key="history"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}>
+            <HistoryPage />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bottom Navbar */}
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-[#10131F] border-t border-[#1E2235] px-4 py-2 flex justify-around z-50">
+        {[
+          { id: 'download', icon: '⬇️', label: 'Download' },
+          { id: 'history', icon: '📋', label: 'History' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as Tab)}
+            className={`flex flex-col items-center gap-1 px-6 py-2 rounded-xl transition-all ${
+              activeTab === tab.id ? 'bg-[#1E2235]' : ''
+            }`}>
+            <span className="text-xl">{tab.icon}</span>
+            <span className={`text-[10px] font-medium ${activeTab === tab.id ? 'text-violet-400' : 'text-[#6B7DB3]'}`}>
+              {tab.label}
+            </span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+client/src/pages/DownloadPage.tsx
+
+tsximport { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import axios from 'axios';
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+const PLATFORMS = [
+  { id: 'youtube', label: 'YouTube', color: '#FF0000', bg: '#2A1A1A', emoji: '▶️' },
+  { id: 'tiktok', label: 'TikTok', color: '#00f2ea', bg: '#0D2020', emoji: '🎵' },
+  { id: 'instagram', label: 'Instagram', color: '#E1306C', bg: '#2A1020', emoji: '📸' },
+  { id: 'facebook', label: 'Facebook', color: '#1877F2', bg: '#0A1A2A', emoji: '📘' },
+  { id: 'twitter', label: 'Twitter/X', color: '#1DA1F2', bg: '#0A1D2A', emoji: '🐦' },
+  { id: 'reddit', label: 'Reddit', color: '#FF4500', bg: '#2A1A0A', emoji: '🤖' },
+];
+
+const FORMATS = [
+  { id: 'mp4', quality: '1080', label: 'MP4 1080p HD', size: '~120 MB', icon: '🎬' },
+  { id: 'mp3', quality: '320', label: 'MP3 320kbps', size: '~8 MB', icon: '🎵' },
+  { id: 'mp4', quality: '720', label: 'MP4 720p', size: '~60 MB', icon: '📹' },
+  { id: 'mp4', quality: '480', label: 'MP4 480p', size: '~30 MB', icon: '📱' },
+];
+
+interface VideoInfo {
+  title: string;
+  duration: string;
+  thumbnail: string;
+  platform: string;
+  uploader: string;
+}
+
+export default function DownloadPage() {
+  const [url, setUrl] = useState('');
+  const [activePlatform, setActivePlatform] = useState('youtube');
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [selectedFormat, setSelectedFormat] = useState(0);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [speed, setSpeed] = useState('');
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const handlePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      setUrl(text);
+      setError('');
+      // Auto detect platform
+      const detected = PLATFORMS.find(p => text.includes(p.id === 'twitter' ? 'twitter.com' : p.id));
+      if (detected) setActivePlatform(detected.id);
+    } catch {
+      setError('Clipboard access denied. Paste manually.');
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!url.trim()) return setError('Please enter a URL');
+    setAnalyzing(true);
+    setError('');
+    setVideoInfo(null);
+    setDone(false);
+
+    try {
+      const { data } = await axios.post(`${API}/api/info`, { url });
+      setVideoInfo(data);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to fetch video info');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!videoInfo || downloading) return;
+    const fmt = FORMATS[selectedFormat];
+    setDownloading(true);
+    setProgress(0);
+    setSpeed('Connecting...');
+    setError('');
+    setDone(false);
+
+    // Use SSE for progress, then trigger file download
+    try {
+      // Start SSE progress stream
+      const progressUrl = `${API}/api/progress?url=${encodeURIComponent(url)}&format=${fmt.id}&quality=${fmt.quality}`;
+      const evtSource = new EventSource(progressUrl);
+      let jobId = '';
+
+      evtSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.error) {
+          evtSource.close();
+          setError('Download failed on server');
+          setDownloading(false);
+          return;
+        }
+        if (data.done) {
+          evtSource.close();
+          setProgress(100);
+          setSpeed('Complete!');
+          setDone(true);
+          setDownloading(false);
+          // Trigger actual file download via hidden link
+          const a = document.createElement('a');
+          a.href = `${API}/api/download`;
+          // POST approach — create form and submit for file
+          triggerDownload(url, fmt.id, fmt.quality);
+          return;
+        }
+        const pct = parseFloat(data.percent) || 0;
+        setProgress(pct);
+        setSpeed(data.speed || '');
+      };
+
+      evtSource.onerror = () => {
+        evtSource.close();
+        setDownloading(false);
+        setError('Connection lost');
+      };
+
+    } catch (e: any) {
+      setError(e.message || 'Download failed');
+      setDownloading(false);
+    }
+  };
+
+  const triggerDownload = async (url: string, format: string, quality: string) => {
+    try {
+      const response = await fetch(`${API}/api/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, format, quality })
+      });
+
+      if (!response.ok) throw new Error('Download failed');
+
+      const blob = await response.blob();
+      const ext = format === 'mp3' ? 'mp3' : 'mp4';
+      const filename = `saveflow_${Date.now()}.${ext}`;
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(dlUrl);
+    } catch (e) {
+      setError('File download failed');
+    }
+  };
+
+  return (
+    <div className="pb-24 min-h-screen">
+      {/* Header */}
+      <div className="px-4 pt-5 pb-2 flex items-center justify-between relative z-10">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-600 to-cyan-400 flex items-center justify-center text-lg">⚡</div>
+          <div>
+            <div className="text-lg font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">SaveFlow</div>
+            <div className="text-[10px] text-[#6B7DB3] tracking-widest uppercase">Video Downloader</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 relative z-10">
+        {/* Platform Pills */}
+        <div className="flex gap-2 overflow-x-auto pb-2 pt-3 scrollbar-hide">
+          {PLATFORMS.map(p => (
+            <motion.button
+              key={p.id}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setActivePlatform(p.id)}
+              className="flex items-center gap-2 px-3 py-2 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-all"
+              style={{
+                background: activePlatform === p.id ? p.bg : '#1E2235',
+                borderColor: activePlatform === p.id ? p.color : '#2A3050',
+                color: activePlatform === p.id ? p.color : '#6B7DB3',
+                boxShadow: activePlatform === p.id ? `0 0 12px ${p.color}44` : 'none'
+              }}>
+              <span className="w-2 h-2 rounded-full" style={{ background: activePlatform === p.id ? p.color : '#3D4A6B' }} />
+              {p.label}
+            </motion.button>
+          ))}
+        </div>
+
+        {/* URL Input */}
+        <div className="mt-3 bg-[#1E2235] border border-[#2A3050] rounded-2xl p-3 focus-within:border-violet-500 transition-colors">
+          <div className="text-[10px] text-[#6B7DB3] tracking-widest uppercase mb-2">Paste Video URL</div>
+          <div className="flex items-center gap-2 bg-[#13172A] rounded-xl px-3">
+            <span className="text-[#6B7DB3]">🔗</span>
+            <input
+              value={url}
+              onChange={e => { setUrl(e.target.value); setError(''); }}
+              placeholder="https://youtube.com/watch?v=..."
+              className="flex-1 bg-transparent border-none outline-none text-white font-mono text-xs py-3 placeholder-[#3D4A6B]"
+              onKeyDown={e => e.key === 'Enter' && handleAnalyze()}
+            />
+            <button onClick={handlePaste}
+              className="px-2 py-1 bg-violet-900/40 border border-violet-700/50 rounded-lg text-violet-300 text-[10px] font-bold">
+              Paste
+            </button>
+          </div>
+        </div>
+
+        {/* Error */}
+        <AnimatePresence>
+          {error && (
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="mt-2 p-3 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300 text-xs">
+              ⚠️ {error}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Analyze Button */}
+        <motion.button
+          whileTap={{ scale: 0.97 }}
+          onClick={handleAnalyze}
+          disabled={analyzing || !url.trim()}
+          className="w-full mt-3 py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 relative overflow-hidden disabled:opacity-50"
+          style={{ background: 'linear-gradient(135deg, #7C3AED, #5B21B6)' }}>
+          <motion.div
+            className="absolute inset-0 bg-white/10"
+            animate={{ x: ['-100%', '100%'] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'linear' }}
+            style={{ skewX: '-20deg', width: '40%' }}
+          />
+          {analyzing ? '⏳ Analyzing...' : '🔍 Analyze Video'}
+        </motion.button>
+
+        {/* Video Info */}
+        <AnimatePresence>
+          {videoInfo && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 bg-[#1E2235] border border-[#2A3050] rounded-2xl p-3">
+              <div className="flex gap-3 items-start">
+                {videoInfo.thumbnail && (
+                  <img src={videoInfo.thumbnail} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white line-clamp-2">{videoInfo.title}</div>
+                  <div className="text-xs text-[#6B7DB3] mt-1">{videoInfo.uploader} • {videoInfo.duration}</div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Format Selector */}
+        <AnimatePresence>
+          {videoInfo && (
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+              <div className="text-[10px] text-[#6B7DB3] tracking-widest uppercase mb-2">Choose Format</div>
+              <div className="grid grid-cols-2 gap-2">
+                {FORMATS.map((fmt, i) => (
+                  <motion.button
+                    key={i}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => setSelectedFormat(i)}
+                    className="p-3 rounded-xl border text-left transition-all relative overflow-hidden"
+                    style={{
+                      background: selectedFormat === i ? (fmt.id === 'mp3' ? '#0A1A2A' : '#1E1430') : '#1E2235',
+                      borderColor: selectedFormat === i ? (fmt.id === 'mp3' ? '#00D4FF' : '#7C3AED') : '#2A3050',
+                    }}>
+                    {selectedFormat === i && (
+                      <div className="absolute top-2 right-2 w-4 h-4 rounded-full flex items-center justify-center text-[10px]"
+                        style={{ background: fmt.id === 'mp3' ? '#00D4FF' : '#7C3AED' }}>✓</div>
+                    )}
+                    <div className="text-xl mb-1">{fmt.icon}</div>
+                    <div className="text-xs font-bold text-white">{fmt.id.toUpperCase()}</div>
+                    <div className="text-[10px] text-[#6B7DB3]">{fmt.id === 'mp3' ? fmt.quality + 'kbps' : fmt.quality + 'p'}</div>
+                    <div className="text-[10px] mt-1" style={{ color: fmt.id === 'mp3' ? '#00D4FF' : '#A78BFA' }}>{fmt.size}</div>
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Progress */}
+        <AnimatePresence>
+          {downloading && (
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+              className="mt-4 bg-[#1E2235] border border-[#2A3050] rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-medium text-white truncate mr-2">{videoInfo?.title}</div>
+                <div className="text-violet-400 font-mono text-sm font-bold flex-shrink-0">{Math.round(progress)}%</div>
+              </div>
+
+              {/* Circular Progress */}
+              <div className="flex justify-center mb-3">
+                <svg width="80" height="80" viewBox="0 0 80 80">
+                  <circle cx="40" cy="40" r="34" fill="none" stroke="#1E2235" strokeWidth="4"/>
+                  <circle cx="40" cy="40" r="34" fill="none"
+                    stroke="url(#grad)" strokeWidth="4" strokeLinecap="round"
+                    strokeDasharray={2 * Math.PI * 34}
+                    strokeDashoffset={2 * Math.PI * 34 * (1 - progress / 100)}
+                    transform="rotate(-90 40 40)"
+                    style={{ transition: 'stroke-dashoffset 0.5s' }}/>
+                  <defs>
+                    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#7C3AED"/>
+                      <stop offset="100%" stopColor="#00D4FF"/>
+                    </linearGradient>
+                  </defs>
+                  <text x="40" y="44" textAnchor="middle" fill="#A78BFA" fontSize="14" fontWeight="bold">{Math.round(progress)}%</text>
+                </svg>
+              </div>
+
+              <div className="h-1.5 bg-[#13172A] rounded-full overflow-hidden">
+                <motion.div className="h-full rounded-full"
+                  style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #7C3AED, #00D4FF)' }}
+                  transition={{ duration: 0.4 }}/>
+              </div>
+              <div className="flex justify-between mt-2 text-[10px] font-mono">
+                <span className="text-violet-400">{speed}</span>
+                <span className="text-[#6B7DB3]">Please wait...</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Success */}
+        <AnimatePresence>
+          {done && (
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+              className="mt-4 p-4 bg-emerald-900/30 border border-emerald-600/50 rounded-2xl text-center">
+              <div className="text-3xl mb-2">✅</div>
+              <div className="text-emerald-400 font-bold">Download Complete!</div>
+              <div className="text-[#6B7DB3] text-xs mt-1">File saved to your Downloads folder</div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Download Button */}
+        <AnimatePresence>
+          {videoInfo && !done && (
+            <motion.button
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={handleDownload}
+              disabled={downloading}
+              className="w-full mt-4 py-4 rounded-xl font-bold text-black text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+              style={{ background: 'linear-gradient(135deg, #00B4DB, #00D4FF)' }}>
+              {downloading ? '⏬ Downloading...' : '⬇️ Download Now'}
+            </motion.button>
+          )}
+        </AnimatePresence>
+
+        {/* Recent Downloads */}
+        {!videoInfo && (
+          <div className="mt-6">
+            <div className="text-[10px] text-[#6B7DB3] tracking-widest uppercase mb-3">Recent Downloads</div>
+            {[
+              { emoji: '🎵', title: 'Imagine Dragons - Believer', sub: '3:24 • YouTube • Today', badge: 'MP3', badgeColor: '#00D4FF' },
+              { emoji: '🎬', title: 'Top 10 Coding Tips 2025', sub: '12:45 • YouTube • Yesterday', badge: 'MP4', badgeColor: '#7C3AED' },
+              { emoji: '🕺', title: 'Viral TikTok Dance', sub: '0:32 • TikTok • 2d ago', badge: '4K', badgeColor: '#F59E0B' },
+            ].map((item, i) => (
+              <motion.div key={i}
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+                className="flex items-center gap-3 p-3 bg-[#1E2235] border border-[#2A3050] rounded-xl mb-2">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-900/50 to-cyan-900/50 flex items-center justify-center text-xl flex-shrink-0">
+                  {item.emoji}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+                  <div className="text-[10px] text-[#6B7DB3] font-mono mt-0.5">{item.sub}</div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-1 rounded-lg border flex-shrink-0"
+                  style={{ color: item.badgeColor, borderColor: item.badgeColor + '44', background: item.badgeColor + '18' }}>
+                  {item.badge}
+                </span>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+client/src/pages/HistoryPage.tsx
+
+tsximport { useState, useEffect } from 'react';
+
+export default function HistoryPage() {
+  const [history] = useState([
+    { id: 1, title: 'Imagine Dragons - Believer', platform: 'YouTube', format: 'MP3', date: 'Today 10:34', size: '8.2 MB' },
+    { id: 2, title: 'Top 10 Coding Tips 2025', platform: 'YouTube', format: 'MP4', date: 'Yesterday', size: '124 MB' },
+    { id: 3, title: 'Viral Dance Challenge', platform: 'TikTok', format: 'MP4', date: '2 days ago', size: '18 MB' },
+  ]);
+
+  return (
+    <div className="px-4 pt-5 pb-24 min-h-screen">
+      <div className="text-lg font-bold mb-4">Download History</div>
+      {history.map(item => (
+        <div key={item.id} className="flex items-center gap-3 p-3 bg-[#1E2235] border border-[#2A3050] rounded-xl mb-2">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+            <div className="text-[10px] text-[#6B7DB3] mt-0.5">{item.platform} • {item.format} • {item.size} • {item.date}</div>
+          </div>
+          <button className="text-[10px] px-2 py-1 bg-violet-900/40 border border-violet-700/50 rounded-lg text-violet-300">
+            Again
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+client/.env
+
+envVITE_API_URL=http://localhost:3001
+
+server/.env
+
+envPORT=3001
+CORS_ORIGIN=http://localhost:5173
+
+
+INSTALLATION & SETUP COMMANDS
+
+bash# 1. Install yt-dlp
+pip install yt-dlp
+# Windows: winget install yt-dlp
+# Update: yt-dlp -U
+
+# 2. Install ffmpeg
+# Windows: winget install ffmpeg
+# Ubuntu: sudo apt install ffmpeg
+# Mac: brew install ffmpeg
+
+# 3. Setup project
+mkdir saveflow && cd saveflow
+
+# 4. Setup server
+mkdir server && cd server
+npm init -y
+npm install express cors helmet express-rate-limit uuid fs-extra dotenv
+npm install -D typescript @types/express @types/cors @types/uuid @types/fs-extra @types/node nodemon ts-node
+npx tsc --init
+# Paste server code above into src/index.ts
+npm run dev
+
+# 5. Setup client (new terminal)
+cd ..
+npm create vite@latest client -- --template react-ts
+cd client
+npm install
+npm install framer-motion axios
+npm install -D tailwindcss autoprefixer postcss
+npx tailwindcss init -p
+# Paste client code above into respective files
+npm run dev
+
+
+DEPLOYMENT
+
+Backend on Railway/Render:
+
+
+Push server folder to GitHub
+Connect to Railway.app
+Add environment variables
+Railway auto-installs Node.js
+Add build command: pip install yt-dlp && npm install && npm run build
+
+
+Frontend on Vercel:
+
+
+Push client folder to GitHub
+Connect to Vercel
+Set VITE_API_URL = your Railway URL
+Deploy
+
+
+
+IMPORTANT NOTES
+
+
+yt-dlp must be installed on the server machine.
+Some platforms (YouTube) may require cookies for age-restricted content.
+Only download content you have permission to download.
+Respect copyright laws and platform Terms of Service.

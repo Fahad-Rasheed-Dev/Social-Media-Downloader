@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: video
+    description: Video download operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /video/info:
+    post:
+      operationId: getVideoInfo
+      tags: [video]
+      summary: Get video metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoInfoRequest"
+      responses:
+        "200":
+          description: Video info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoInfo"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /video/download:
+    post:
+      operationId: startDownload
+      tags: [video]
+      summary: Start video download job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadRequest"
+      responses:
+        "200":
+          description: Job started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadJob"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /video/progress/{jobId}:
+    get:
+      operationId: getDownloadProgress
+      tags: [video]
+      summary: Poll download job progress
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Progress info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadProgress"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +112,101 @@ components:
       required:
         - status
 
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    VideoInfoRequest:
+      type: object
+      properties:
+        url:
+          type: string
+      required:
+        - url
+
+    VideoFormat:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        ext:
+          type: string
+        quality:
+          type: string
+      required:
+        - id
+        - label
+        - ext
+        - quality
+
+    VideoInfo:
+      type: object
+      properties:
+        title:
+          type: string
+        duration:
+          type: string
+        thumbnail:
+          type: string
+        platform:
+          type: string
+        uploader:
+          type: string
+        formats:
+          type: array
+          items:
+            $ref: "#/components/schemas/VideoFormat"
+      required:
+        - title
+        - duration
+        - platform
+        - uploader
+        - formats
+
+    DownloadRequest:
+      type: object
+      properties:
+        url:
+          type: string
+        format:
+          type: string
+        quality:
+          type: string
+      required:
+        - url
+        - format
+        - quality
+
+    DownloadJob:
+      type: object
+      properties:
+        jobId:
+          type: string
+      required:
+        - jobId
+
+    DownloadProgress:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [processing, done, error]
+        percent:
+          type: number
+        speed:
+          type: string
+        eta:
+          type: string
+        ext:
+          type: string
+        error:
+          type: string
+      required:
+        - status
+        - percent
