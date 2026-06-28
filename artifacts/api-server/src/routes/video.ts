@@ -31,10 +31,12 @@ function formatDuration(seconds: number): string {
 
 function findYtDlp(): string {
   const candidates = [
-    "/home/runner/workspace/.pythonlibs/bin/yt-dlp",
-    "/home/runner/.local/bin/yt-dlp",
-    "yt-dlp",
-    "/home/runner/.nix-profile/bin/yt-dlp",
+    "/home/runner/workspace/.pythonlibs/bin/yt-dlp", // Replit pip
+    "/home/runner/.local/bin/yt-dlp",                // Replit user local
+    "/usr/local/bin/yt-dlp",                         // Render / Ubuntu pip3
+    "/usr/bin/yt-dlp",                               // system package
+    "yt-dlp",                                        // PATH fallback
+    "/home/runner/.nix-profile/bin/yt-dlp",          // Replit nix
     "/nix/var/nix/profiles/default/bin/yt-dlp",
   ];
   for (const c of candidates) {
